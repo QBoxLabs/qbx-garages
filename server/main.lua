@@ -1,8 +1,8 @@
-local QBCore = exports['qb-core']:GetCoreObject()
+local QBX = exports.qbx_core
 local OutsideVehicles = {}
 local VehicleSpawnerVehicles = {}
 
-local function TableContains (tab, val)
+local function TableContains(tab, val)
     if type(val) == "table" then
         for _, value in ipairs(tab) do
             if TableContains(val, value) then
@@ -20,12 +20,13 @@ local function TableContains (tab, val)
     return false
 end
 
-QBCore.Functions.CreateCallback("qb-garage:server:GetOutsideVehicle", function(source, cb, plate)
+-- Callback for getting outside vehicles
+exports.qbx_core:CreateCallback("qbx-garage:server:GetOutsideVehicle", function(source, cb, plate)
     plate = string.upper(plate)
     local src = source
-    local pData = QBCore.Functions.GetPlayer(src)
+    local pData = QBX.Functions.GetPlayer(src)
     if not OutsideVehicles[plate] then cb(nil) return end
-     MySQL.query('SELECT * FROM player_vehicles WHERE citizenid = ? and plate = ?', {pData.PlayerData.citizenid, plate}, function(result)
+    MySQL.query('SELECT * FROM player_vehicles WHERE citizenid = ? and plate = ?', {pData.PlayerData.citizenid, plate}, function(result)
         if result[1] then
             cb(result[1])
         else
@@ -34,9 +35,9 @@ QBCore.Functions.CreateCallback("qb-garage:server:GetOutsideVehicle", function(s
     end)
 end)
 
-QBCore.Functions.CreateCallback("qb-garages:server:GetVehicleLocation", function(source, cb, plate)
+-- Callback for getting vehicle location
+exports.qbx_core:CreateCallback("qbx-garages:server:GetVehicleLocation", function(source, cb, plate)
     plate = string.upper(plate)
-    local src = source
     local vehicles = GetAllVehicles()
     for _, vehicle in pairs(vehicles) do
         local pl = GetVehicleNumberPlateText(vehicle)
@@ -52,7 +53,7 @@ QBCore.Functions.CreateCallback("qb-garages:server:GetVehicleLocation", function
             local location = json.decode(veh.parkingspot)
             cb(vector3(location.x, location.y, location.z))
         else
-            local garageName = veh and veh.garage
+            local garageName = veh.garage
             local garage = Config.Garages[garageName]
             if garage and garage.blipcoords then
                 cb(garage.blipcoords)
@@ -75,66 +76,57 @@ QBCore.Functions.CreateCallback("qb-garages:server:GetVehicleLocation", function
     end
 end)
 
-QBCore.Functions.CreateCallback("qb-garage:server:CheckSpawnedVehicle", function(source, cb, plate)
+-- Callback for checking if a vehicle is spawned
+exports.qbx_core:CreateCallback("qbx-garage:server:CheckSpawnedVehicle", function(source, cb, plate)
     plate = string.upper(plate)
     cb(VehicleSpawnerVehicles[plate] ~= nil and VehicleSpawnerVehicles[plate])
 end)
 
-RegisterNetEvent("qb-garage:server:UpdateSpawnedVehicle", function(plate, value)
+-- Update spawned vehicle status
+RegisterNetEvent("qbx-garage:server:UpdateSpawnedVehicle", function(plate, value)
     plate = string.upper(plate)
     VehicleSpawnerVehicles[plate] = value
 end)
 
-QBCore.Functions.CreateCallback('qb-garage:server:spawnvehicle', function (source, cb, vehInfo, coords, heading, warp)
-    local hash = type(vehInfo.vehicle) == 'string' and joaat(vehInfo.vehicle) or vehInfo.vehicle;
+-- Callback for spawning a vehicle
+exports.qbx_core:CreateCallback('qbx-garage:server:spawnvehicle', function(source, cb, vehInfo, coords, heading, warp)
+    local hash = type(vehInfo.vehicle) == 'string' and joaat(vehInfo.vehicle) or vehInfo.vehicle
+    local ped = GetPlayerPed(source)
+    coords = coords or GetEntityCoords(ped)
 
-    local ped
-    if not coords then
-        ped = GetPlayerPed(source)
-        coords = GetEntityCoords(ped)
-    end
-
-    QBCore.Functions.TriggerClientCallback('qb-garages:client:GetVehicleType', source, function (vehicleType)
-
+    QBX.Functions.TriggerClientCallback('qbx-garages:client:GetVehicleType', source, function(vehicleType)
         if not CreateVehicleServerSetter then
-            error('^1CreateVehicleServerSetter is not available on your artifact, please use artifact 5904 or above to be able to use this^0')
+            error('^1CreateVehicleServerSetter is not available, please use artifact 5904 or above to be able to use this^0')
             return
         end
 
         local veh = CreateVehicleServerSetter and CreateVehicleServerSetter(hash, vehicleType, coords.x, coords.y, coords.z, heading) or CreateVehicle(hash, coords.x, coords.y, coords.z, heading, true, true)
         Wait(500)
-        if not veh or not NetworkGetNetworkIdFromEntity(veh) then
-            print('ISSUE HERE', veh, NetworkGetNetworkIdFromEntity(veh))
-        end
-
         while not DoesEntityExist(veh) do
             Wait(0)
         end
-    
-        while GetVehicleNumberPlateText(veh) == "" do
-            Wait(0)
-        end
-        
-        local vehProps = {}
+
         local plate = string.upper(vehInfo.plate)
         if plate then
             SetVehicleNumberPlateText(veh, plate)
         end
 
         if warp then
-            SetPedIntoVehicle(source, veh, -1)
+            SetPedIntoVehicle(ped, veh, -1)
         end
 
+        local vehProps = {}
         local result = MySQL.query.await('SELECT mods FROM player_vehicles WHERE plate = ?', {plate})
         if result[1] then vehProps = json.decode(result[1].mods) end
         local netId = NetworkGetNetworkIdFromEntity(veh)
-        OutsideVehicles[plate] = {netID = netId, entity = veh}
+        OutsideVehicles[plate] = { netID = netId, entity = veh }
         cb(netId, vehProps or {})
     end, hash)
 end)
 
+-- Function for retrieving vehicles by citizen ID and garage name
 local function GetVehicles(citizenid, garageName, state, cb)
-    local result = nil
+    local result
     if not Config.GlobalParking then
         result = MySQL.Sync.fetchAll('SELECT * FROM player_vehicles WHERE citizenid = @citizenid AND garage = @garage AND state = @state', {
             ['@citizenid'] = citizenid,
@@ -150,6 +142,7 @@ local function GetVehicles(citizenid, garageName, state, cb)
     cb(result)
 end
 
+-- Function for retrieving depot vehicles
 local function GetDepotVehicles(citizenid, state, garage, cb)
     local result = MySQL.Sync.fetchAll("SELECT * FROM player_vehicles WHERE citizenid = @citizenid AND (state = @state OR garage = @garage OR garage IS NULL or garage = '')", {
         ['@citizenid'] = citizenid,
